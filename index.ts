@@ -1,16 +1,11 @@
-import ExcelJS from "exceljs";
+import ExcelJS, { Row } from "exceljs";
 import path from "node:path";
 import { fileURLToPath } from "url";
 
 interface FilaTabla {
-    StartTime: string;
-    EndTime: string;
     Name: string;
     Text: string;
-    RevisedText: string;
-    WPS: string;
-    TotalStartTime: string;
-    TotalEndTime: string;
+    Row: Row;
 }
 
 type ResultType = Array<Partial<Record<"mind" | "normal", string>>>;
@@ -20,6 +15,20 @@ type BoxTimeType = {
     Text: string;
     Type: "mind" | "normal";
 }[];
+
+interface FraseAsignada {
+    bloque: FilaTabla | null;
+    bloqueIndex: number | null;
+    texto: string;
+}
+
+interface ItemScan {
+    text: string;
+    type: "mind" | "normal";
+    frases: FraseAsignada[];
+}
+
+type Capa2Result = ItemScan[];
 
 async function main() {
     console.clear();
@@ -55,38 +64,36 @@ async function main() {
     };
 
     const maxChars = approxCharsFit();
+    const maxLines = 2;
 
     let TempNameSet: string = "";
     const TempBlockText: FilaTabla[] = [];
     sheet.eachRow((row, rowNumber) => {
         const fila: FilaTabla = {
-            StartTime: row.getCell("A").value?.toString().trim() || "",
-            EndTime: row.getCell("B").value?.toString().trim() || "",
             Name: row.getCell("C").value?.toString().trim() || "",
             Text: row.getCell("D").value?.toString().trim()
                 .replaceAll("\n", " ")
                 .replaceAll(".¿", ". ¿")
                 .replace(/\.([A-Za-z])/g, '. $1')
                 .replace(/ +/g, ' ') || "",
-            RevisedText: row.getCell("E").value?.toString().trim() || "",
-            WPS: row.getCell("F").value?.toString().trim() || "",
-            TotalStartTime: row.getCell("G").value?.toString().trim() || "",
-            TotalEndTime: row.getCell("H").value?.toString().trim() || ""
+            Row: row  // ✅ Agregado aquí
         };
         if (fila.Text.includes("[")) return;
-        if (fila.StartTime === "Start Time") return;
+        const strartTime = row.getCell("A").value?.toString().trim() || "";
+        if (strartTime === "Start Time") return;
         if (fila.Name.length === 0) return;
 
         if (TempNameSet !== fila.Name) {
             if (TempNameSet !== "") {
                 blockAnalysis(TempBlockText);
-                TempBlockText.length = 0; // Clear the array for the next block
+                TempBlockText.length = 0;
             }
             TempNameSet = fila.Name;
         }
         fila.Name = TempNameSet;
         TempBlockText.push(fila);
     });
+
     function blockAnalysis(block: FilaTabla[]) {
         const name = block[0].Name;
         const fullText = block.map(fila => fila.Text).join(" - ");
@@ -96,21 +103,24 @@ async function main() {
 
         console.log(fullText);
         const result1 = capa1(fullText);
-        // console.log(result1);
-
         const result2 = capa2(result1, block);
-        // console.log(result2);
+        const result3 = capa3(result2, maxChars, maxLines);
 
     }
-    function capa1(fullText: string) {
 
-        const separeMind = fullText.replaceAll(" - ", " ").split("(")
-        if (separeMind.length > 1) separeMind.shift();
+    function capa1(fullText: string) {
+        const separeMind = fullText.replaceAll(" - ", " ").split("(");
 
         type BoxDialogType = Array<Partial<Record<"mind" | "normal", string>>>;
         const BoxDialog: BoxDialogType = [];
 
-        for (const element of separeMind) {
+        if (separeMind.length > 0 && separeMind[0].trim().length > 0) {
+            BoxDialog.push({ normal: separeMind[0].trim() });
+        }
+
+        for (let i = 1; i < separeMind.length; i++) {
+            const element = separeMind[i];
+
             if (!element.includes(")")) {
                 BoxDialog.push({ normal: element.trim() });
                 continue;
@@ -123,7 +133,6 @@ async function main() {
             }
         }
 
-
         const result: ResultType = [];
         const tempAccumulator: string[] = [];
         let flagKey: string = "";
@@ -133,7 +142,6 @@ async function main() {
             const value = element[key] || "";
 
             if (flagKey !== key) {
-                // Si hay elementos acumulados, agrégalos al resultado
                 if (tempAccumulator.length > 0) {
                     result.push({ [flagKey]: tempAccumulator.join(" ") });
                     tempAccumulator.length = 0;
@@ -144,44 +152,87 @@ async function main() {
             tempAccumulator.push(value);
         }
 
-        // ¡IMPORTANTE! Agregar el último grupo acumulado
-        if (tempAccumulator.length > 0) result.push({ [flagKey]: tempAccumulator.join(" ") });
+        if (tempAccumulator.length > 0) {
+            result.push({ [flagKey]: tempAccumulator.join(" ") });
+        }
 
         return result;
     }
-    function capa2(boxResult: ResultType, blocks: FilaTabla[]) {
-        console.log(boxResult);
 
-        console.log("-------------------");
-        
+    function capa2(boxResult: ResultType, blocks: FilaTabla[]): Capa2Result {
+        const blokFrase: Capa2Result = [];
 
-        // const BoxTime: BoxTimeType = [];
-        // for (const block of blocks) {
-        //     const textBlock = block.Text.replaceAll("(", "").replaceAll(")", "").replace(/ +/g, ' ').trim();
-        //     // console.log(textBlock);
-        //     for (const frase of boxResult) {
-        //         const key = Object.keys(frase)[0] as "mind" | "normal";
-        //         const text = frase[key] || "";
-        //         if (text.includes(textBlock) || textBlock.includes(text)) {
-        //             console.log(`[${boxResult.indexOf(frase)}][${key}] => ${textBlock}`);
-        //         }
-        //     }
-        // }
-        
-        // for (const frase of boxResult) {
-        //     const key = Object.keys(frase)[0] as "mind" | "normal";
-        //     const text = frase[key] || "";
-        //     console.log(text);
-        // }
+        for (const element of boxResult) {
+            const text = Object.values(element)[0] || "";
+            const itemScan: ItemScan = {
+                text: text,
+                type: Object.keys(element)[0] as "mind" | "normal",
+                frases: []
+            };
+
+            const fraseAsignado: FraseAsignada[] = [];
+            const partition = text.split('.');
+
+            for (const frase of partition) {
+                const itemFrase: FraseAsignada = {
+                    bloque: null,
+                    bloqueIndex: null,
+                    texto: frase.trim()
+                };
+
+                if (itemFrase.texto.length === 0) continue;
+
+                for (const block of blocks) {
+                    const btxt = block.Text.replaceAll("(", "").replaceAll(")", "").replaceAll(" - ", " ");
+                    if (itemFrase.bloque === null && btxt.includes(itemFrase.texto)) {
+                        itemFrase.bloque = block;
+                        itemFrase.bloqueIndex = blocks.indexOf(block);
+                        break;
+                    }
+                    if (itemFrase.bloque === null && itemFrase.texto.includes(btxt)) {
+                        itemFrase.bloque = block;
+                        itemFrase.bloqueIndex = blocks.indexOf(block);
+                        break;
+                    }
+
+                }
+                fraseAsignado.push(itemFrase);
+            }
+
+            itemScan.frases = fraseAsignado;
+            blokFrase.push(itemScan);
+        }
+
+        return blokFrase;
+    }
+
+    function capa3(blockText: Capa2Result, maxChars: number, maxLines: number) {
+        // console.log(blockText);
+
+        console.log(`\n------------- Max chars [${maxChars}] --------------\n`);
 
 
-        // console.log(boxResult);
+        for (const element of blockText) {
+
+            const totalMaxChars = maxChars * maxLines
+            const numRequireRows = Math.ceil(element.text.length / totalMaxChars)
+            
+            // const rangeCell = []
+            // for (let index = 0; index < numRequireRows; index++) {
+                
+            // }
+
+            for (const frase of element.frases) {
+                if (frase.texto.length > maxChars) {
+                    
+                }
+                console.log(`[${frase.texto.length <= maxChars}] ` + frase.texto);
+            }
+        }
 
     }
 
     // await workbook.xlsx.writeFile(outputPath);
 }
-
-
 
 main().catch(console.error);
