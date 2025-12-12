@@ -72,6 +72,7 @@ async function main() {
     const maxChars = approxCharsFit();
 
     let TempNameSet: string = "";
+    let TempRowSet: Row | null | undefined = null;
     const TempBlockText: FilaTabla[] = [];
     sheet.eachRow((row, rowNumber) => {
         const fila: FilaTabla = {
@@ -86,12 +87,13 @@ async function main() {
         if (fila.Text.includes("[")) return;
         const strartTime = row.getCell("A").value?.toString().trim() || "";
         if (strartTime === "Start Time") return;
-        if (fila.Name.length === 0) return;
+        if (fila.Name.length === 0) fila.Name = TempNameSet;
+        if (fila.Row === undefined && TempRowSet!==null && TempRowSet!==undefined) fila.Row = TempRowSet;
+        if (fila.Row !== undefined && fila.Row != null) TempRowSet = fila.Row;
         if (TempNameSet !== fila.Name) {
             if (TempNameSet !== "") {
-                const reactionFlasg = TempBlockText.filter(e => e.Text === "REACTION").map(e=>e.Row)
                 const cleanBlockText = TempBlockText.filter(e => e.Text !== "REACTION")
-                if (cleanBlockText.length !== 0) blockAnalysis(cleanBlockText, reactionFlasg);
+                if (cleanBlockText.length !== 0) blockAnalysis(cleanBlockText);
                 TempBlockText.length = 0;
             }
             TempNameSet = fila.Name;
@@ -100,7 +102,7 @@ async function main() {
         TempBlockText.push(fila);
     });
 
-    function blockAnalysis(block: FilaTabla[], reaction : Row[]) {
+    function blockAnalysis(block: FilaTabla[]) {
         const name = block[0].Name;
         const fullText = block.map(fila => fila.Text).join(" - ");
 
@@ -458,7 +460,11 @@ async function main() {
     }
 
     function capa4(celdas : CeldaConsolidada[]){
-
+        for (const element of celdas) {
+            const inRow = element.row ?? celdas[celdas.indexOf(element) - 1].row;
+            console.log(`[${inRow?.number}] \n${element.text}\n`);
+            
+        }
     }
 
     // await workbook.xlsx.writeFile(outputPath);
