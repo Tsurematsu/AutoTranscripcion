@@ -69,6 +69,7 @@ async function main() {
     let TempNameSet: string = "";
     const TempBlockText: FilaTabla[] = [];
     sheet.eachRow((row, rowNumber) => {
+
         const fila: FilaTabla = {
             Name: row.getCell("C").value?.toString().trim() || "",
             Text: row.getCell("D").value?.toString().trim()
@@ -82,10 +83,10 @@ async function main() {
         const strartTime = row.getCell("A").value?.toString().trim() || "";
         if (strartTime === "Start Time") return;
         if (fila.Name.length === 0) return;
-
         if (TempNameSet !== fila.Name) {
             if (TempNameSet !== "") {
-                blockAnalysis(TempBlockText);
+                const cleanBlockText = TempBlockText.filter(e => e.Text !== "REACTION")
+                if (cleanBlockText.length !== 0) blockAnalysis(cleanBlockText);
                 TempBlockText.length = 0;
             }
             TempNameSet = fila.Name;
@@ -100,8 +101,8 @@ async function main() {
 
         console.log("_____________________________________________________");
         console.log("Name:" + name);
+        // console.log(fullText);
 
-        console.log(fullText);
         const result1 = capa1(fullText);
         const result2 = capa2(result1, block);
         const result3 = capa3(result2, maxChars, maxLines);
@@ -208,26 +209,244 @@ async function main() {
 
     function capa3(blockText: Capa2Result, maxChars: number, maxLines: number) {
         // console.log(blockText);
-
-        console.log(`\n------------- Max chars [${maxChars}] --------------\n`);
-
-
+        
+        const packCeldas: FraseAsignada[][] = []
         for (const element of blockText) {
-
             const totalMaxChars = maxChars * maxLines
-            const numRequireRows = Math.ceil(element.text.length / totalMaxChars)
+            const celdas = consiliador(element.frases, totalMaxChars, maxChars, element.type)
+            packCeldas.push(...celdas)
+        }
+        for (const element of packCeldas) {
+            console.log(element[0].bloque?.Row.number);
             
-            // const rangeCell = []
-            // for (let index = 0; index < numRequireRows; index++) {
-                
-            // }
+            console.log(separeToLines(viewPill(element), maxChars) + "\n");
+        }
 
-            for (const frase of element.frases) {
-                if (frase.texto.length > maxChars) {
-                    
-                }
-                console.log(`[${frase.texto.length <= maxChars}] ` + frase.texto);
+
+        function consiliador(
+            frases: FraseAsignada[],
+            totalMaxChars: number,
+            maxLine: number,
+            typeItem : "mind" | "normal"
+        ): FraseAsignada[][] {
+
+            let preProcesado: FraseAsignada[] = []
+            for (const element of frases) {
+                const bloques = makeBlocks(element, totalMaxChars, maxLine)
+                preProcesado.push(...(bloques.length > 0 ? bloques : [element]))
             }
+
+            const packCeldas: FraseAsignada[][] = []
+            let indice = 0;
+            const MAX_LINEAS_POR_CELDA = 2;
+
+            while (indice < preProcesado.length) {
+                const celda: FraseAsignada[] = [preProcesado[indice]]
+                indice++;
+
+                // ✅ Modo codicioso: intenta agregar todas las frases posibles
+                while (indice < preProcesado.length) {
+                    const prueba = [...celda, preProcesado[indice]]
+                    const textoUnido = viewPill(prueba)
+                    const lineasResultantes = contarLineas(textoUnido, maxLine)
+
+                    // Verificar límite de líneas
+                    if (lineasResultantes > MAX_LINEAS_POR_CELDA) break
+
+                    // ✅ También verificar que no exceda caracteres totales
+                    if (textoUnido.length > totalMaxChars) break
+
+                    celda.push(preProcesado[indice])
+                    indice++;
+                }
+
+                if (celda.length > 0) {
+                    celda[0].texto = (typeItem=="mind" ? "(" : "") + celda[0].texto
+                    celda[celda.length-1].texto = celda[celda.length-1].texto + (typeItem=="mind" ? ")" : "")
+                    packCeldas.push(celda);
+                    // const unionTXT = viewPill(celda);
+                    // const numLineas = contarLineas(unionTXT, maxLine);
+                    // console.log(`\n✅ Celda (${numLineas} líneas, ${unionTXT.length} chars):`);
+                    // console.log(separeToLines(unionTXT, maxLine) + "\n");
+                }
+            }
+
+            return packCeldas;
+        }
+
+        function contarLineas(texto: string, maxCharsPerLine: number): number {
+            const lineas = separeToLines(texto, maxCharsPerLine);
+            return lineas.split("\n").filter(l => l.trim()).length;
+        }
+
+        function makeBlocks(frace: FraseAsignada, totalMaxChars: number, maxLine: number) {
+            const returnBlocks: FraseAsignada[] = [];
+
+            // Si la frase ya cabe, devuélvela la frace normal
+            if (frace.texto.length <= totalMaxChars) return [frace];
+
+            let reciduo = separadorInline(frace, totalMaxChars, maxLine, (section) => {
+                returnBlocks.push(section)
+            })
+
+            // Protección contra bucle infinito
+            let iteraciones = 0;
+            const MAX_ITERACIONES = 100;
+
+            while (reciduo.texto.length > totalMaxChars && iteraciones < MAX_ITERACIONES) {
+                reciduo = separadorInline(reciduo, totalMaxChars, maxLine, (section) => {
+                    returnBlocks.push(section)
+                })
+                iteraciones++;
+            }
+
+            // Agrega el último residuo
+            if (reciduo.texto.trim().length > 0) {
+                returnBlocks.push(reciduo)
+            }
+
+            return returnBlocks;
+        }
+
+        function separadorInline(
+            frase: FraseAsignada,
+            maxChar: number,
+            maxLine: number,
+            segment: (e: FraseAsignada) => void
+        ) {
+            const texto = frase.texto;
+
+            if (texto.length <= maxChar) {
+                segment({ ...frase });
+                return { ...frase, texto: "" };
+            }
+
+            // ✅ Estrategia: Buscar el bloque completo más cercano
+            const bloqueCompleto = encontrarProximoBloqueCompleto(texto);
+
+            if (bloqueCompleto && bloqueCompleto.fin <= maxChar) {
+                // Si hay un bloque completo que cabe en el límite, úsalo
+                const recorte = texto.slice(0, bloqueCompleto.fin).trim();
+                segment({ ...frase, texto: recorte });
+                return { ...frase, texto: texto.slice(bloqueCompleto.fin).trim() };
+            }
+
+            // Si no, buscar otros puntos de corte (puntos, comas) ANTES del bloque
+            const ventana = texto.slice(0, maxChar);
+            const puntosFinal = [...ventana.matchAll(/\.\s/g)].map(m => m.index! + 1);
+            const comas = [...ventana.matchAll(/,\s/g)].map(m => m.index! + 1);
+
+            // Si hay un bloque que empieza dentro de la ventana, cortar ANTES
+            if (bloqueCompleto && bloqueCompleto.inicio < maxChar) {
+                const puntosAntes = [...puntosFinal, ...comas].filter(p => p < bloqueCompleto.inicio);
+
+                if (puntosAntes.length > 0) {
+                    const puntoCorte = Math.max(...puntosAntes);
+                    const recorte = texto.slice(0, puntoCorte).trim();
+                    segment({ ...frase, texto: recorte });
+                    return { ...frase, texto: texto.slice(puntoCorte).trim() };
+                }
+            }
+
+            // Último recurso: cortar por cualquier punto disponible
+            const todosPuntos = [...puntosFinal, ...comas];
+            const puntoCorte = todosPuntos.length > 0
+                ? Math.max(...todosPuntos)
+                : ventana.lastIndexOf(' ');
+
+            const recorte = texto.slice(0, puntoCorte > 0 ? puntoCorte : maxChar).trim();
+            segment({ ...frase, texto: recorte });
+            return { ...frase, texto: texto.slice(recorte.length).trim() };
+        }
+
+        // ✅ Encuentra el próximo bloque completo de pregunta/exclamación
+        function encontrarProximoBloqueCompleto(texto: string): { inicio: number, fin: number } | null {
+            // Buscar ¿...?
+            const matchPregunta = texto.match(/¿[^?]*\?/);
+            if (matchPregunta && matchPregunta.index !== undefined) {
+                return {
+                    inicio: matchPregunta.index,
+                    fin: matchPregunta.index + matchPregunta[0].length
+                };
+            }
+
+            // Buscar ¡...!
+            const matchExclamacion = texto.match(/¡[^!]*!/);
+            if (matchExclamacion && matchExclamacion.index !== undefined) {
+                return {
+                    inicio: matchExclamacion.index,
+                    fin: matchExclamacion.index + matchExclamacion[0].length
+                };
+            }
+
+            return null;
+        }
+
+        function separadorInteligente(texto: string, maxChar: number) {
+            const slice = texto.slice(0, maxChar);
+
+            // Jerarquía de puntos de corte (de mejor a peor)
+            const prioridades = [
+                { regex: /\.\s/g, peso: 100, offset: 1 },      // Punto final
+                { regex: /\?\s/g, peso: 90, offset: 1 },       // Pregunta
+                { regex: /!\s/g, peso: 90, offset: 1 },        // Exclamación
+                { regex: /;\s/g, peso: 80, offset: 1 },        // Punto y coma
+                { regex: /,\s/g, peso: 70, offset: 1 },        // Coma
+                { regex: /:\s/g, peso: 60, offset: 1 },        // Dos puntos
+                { regex: /\s-\s/g, peso: 50, offset: 2 },      // Guion con espacios
+                { regex: /\s/g, peso: 10, offset: 0 }          // Último recurso: espacio
+            ];
+
+            let mejorCorte = { posicion: -1, peso: -1 };
+
+            for (const prioridad of prioridades) {
+                const matches = [...slice.matchAll(prioridad.regex)];
+                if (matches.length > 0) {
+                    const ultimoMatch = matches[matches.length - 1];
+                    const posicion = ultimoMatch.index! + prioridad.offset;
+
+                    if (prioridad.peso > mejorCorte.peso) {
+                        mejorCorte = { posicion, peso: prioridad.peso };
+                    }
+                }
+            }
+
+            return mejorCorte.posicion > 0 ? mejorCorte.posicion : maxChar;
+        }
+
+        function viewPill(lista: FraseAsignada[]) {
+            return (lista.map(e => e.texto).join(". ") + ".").replaceAll("..", ".")
+        }
+
+        function separeToLines(texto: string, maxChars: number) {
+            let resultado = ""
+            let residuo = separador(texto, maxChars, (line: string) => {
+                resultado += line + " \n"
+            })
+            while (residuo.length > 0) {
+                residuo = separador(residuo, maxChars, (line: string) => {
+                    resultado += line + " \n"
+                })
+            }
+            return (resultado.trim() + ".")
+                .replaceAll("..", ".")
+                .replaceAll(",.", ",")
+                .replaceAll("?.", "?")
+                .replaceAll("!.", "!")
+        }
+
+        function separador(texto: string, maxChars: number, add: (line: string) => void) {
+            if (texto.length > maxChars) {
+                const separado = texto.slice(0, maxChars).split(" ");
+                const original = texto.split(" ");
+                if (original[separado.length - 1].length > 1) separado.pop();
+                const line = separado.join(" ");
+                add(line.trim());
+                return texto.slice(line.length, texto.length).trim() || "";
+            } else {
+                add(texto.trim())
+            }
+            return ""
         }
 
     }
