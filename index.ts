@@ -28,6 +28,11 @@ interface ItemScan {
     frases: FraseAsignada[];
 }
 
+interface CeldaConsolidada {
+    row : Row | undefined;
+    text : string
+}
+
 type Capa2Result = ItemScan[];
 
 async function main() {
@@ -42,7 +47,8 @@ async function main() {
     const column = sheet.getColumn("D");
     const cell = sheet.getCell('A1');
     const font = cell.font;
-
+    
+    const MAX_LINEAS_POR_CELDA = 2;
     const width = column.width || 8.43;
     const fontSize = font?.size || 12;
     const fontName = font?.name || "Arial";
@@ -64,12 +70,10 @@ async function main() {
     };
 
     const maxChars = approxCharsFit();
-    const maxLines = 2;
 
     let TempNameSet: string = "";
     const TempBlockText: FilaTabla[] = [];
     sheet.eachRow((row, rowNumber) => {
-
         const fila: FilaTabla = {
             Name: row.getCell("C").value?.toString().trim() || "",
             Text: row.getCell("D").value?.toString().trim()
@@ -85,8 +89,9 @@ async function main() {
         if (fila.Name.length === 0) return;
         if (TempNameSet !== fila.Name) {
             if (TempNameSet !== "") {
+                const reactionFlasg = TempBlockText.filter(e => e.Text === "REACTION").map(e=>e.Row)
                 const cleanBlockText = TempBlockText.filter(e => e.Text !== "REACTION")
-                if (cleanBlockText.length !== 0) blockAnalysis(cleanBlockText);
+                if (cleanBlockText.length !== 0) blockAnalysis(cleanBlockText, reactionFlasg);
                 TempBlockText.length = 0;
             }
             TempNameSet = fila.Name;
@@ -95,7 +100,7 @@ async function main() {
         TempBlockText.push(fila);
     });
 
-    function blockAnalysis(block: FilaTabla[]) {
+    function blockAnalysis(block: FilaTabla[], reaction : Row[]) {
         const name = block[0].Name;
         const fullText = block.map(fila => fila.Text).join(" - ");
 
@@ -105,8 +110,8 @@ async function main() {
 
         const result1 = capa1(fullText);
         const result2 = capa2(result1, block);
-        const result3 = capa3(result2, maxChars, maxLines);
-
+        const result3 = capa3(result2, maxChars);
+        capa4(result3)
     }
 
     function capa1(fullText: string) {
@@ -207,21 +212,22 @@ async function main() {
         return blokFrase;
     }
 
-    function capa3(blockText: Capa2Result, maxChars: number, maxLines: number) {
+    function capa3(blockText: Capa2Result, maxChars: number) {
         // console.log(blockText);
-        
+        const retorno : CeldaConsolidada[] = []
         const packCeldas: FraseAsignada[][] = []
+        const totalMaxChars = maxChars * MAX_LINEAS_POR_CELDA
         for (const element of blockText) {
-            const totalMaxChars = maxChars * maxLines
             const celdas = consiliador(element.frases, totalMaxChars, maxChars, element.type)
             packCeldas.push(...celdas)
         }
-        for (const element of packCeldas) {
-            console.log(element[0].bloque?.Row.number);
-            
-            console.log(separeToLines(viewPill(element), maxChars) + "\n");
-        }
 
+        for (const element of packCeldas) {
+            retorno.push({
+                row: element[0].bloque?.Row,
+                text: separeToLines(viewPill(element), maxChars)
+            })
+        }
 
         function consiliador(
             frases: FraseAsignada[],
@@ -238,8 +244,6 @@ async function main() {
 
             const packCeldas: FraseAsignada[][] = []
             let indice = 0;
-            const MAX_LINEAS_POR_CELDA = 2;
-
             while (indice < preProcesado.length) {
                 const celda: FraseAsignada[] = [preProcesado[indice]]
                 indice++;
@@ -448,6 +452,12 @@ async function main() {
             }
             return ""
         }
+
+        return retorno;
+
+    }
+
+    function capa4(celdas : CeldaConsolidada[]){
 
     }
 
